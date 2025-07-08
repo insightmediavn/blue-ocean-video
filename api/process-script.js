@@ -1,3 +1,5 @@
+// File: /api/process-script.js
+
 export const config = {
   runtime: 'nodejs'
 };
@@ -8,11 +10,11 @@ export default async function handler(req, res) {
   }
 
   const { scriptContent } = req.body;
-  const apiKey = process.env.OPENROUTER_API_KEY
-    || "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";
+
+  const apiKey = process.env.OPENROUTER_API_KEY || "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";
   const model = "openai/gpt-4o";
 
-  if (!apiKey.startsWith("sk-or-v1-")) {
+  if (!apiKey || !apiKey.startsWith("sk-or-v1-")) {
     return res.status(401).json({ error: "API Key missing or invalid." });
   }
 
@@ -21,11 +23,13 @@ export default async function handler(req, res) {
   }
 
   try {
-    const response = await fetch("https://openrouter.ai/v1/chat/completions", {
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://blue-ocean-video.vercel.app/", // Thêm header để đúng policy OpenRouter
+        "X-Title": "Blue Ocean Video Studio"
       },
       body: JSON.stringify({
         model,
@@ -44,16 +48,14 @@ export default async function handler(req, res) {
 
     const data = await response.json();
 
-    if (!data.choices?.[0]?.message?.content) {
+    if (!data.choices || !data.choices[0]?.message?.content) {
       return res.status(400).json({
         error: "AI returned an empty response.",
         debug: data
       });
     }
 
-    return res.status(200).json({
-      output: data.choices[0].message.content
-    });
+    return res.status(200).json({ output: data.choices[0].message.content });
   } catch (error) {
     return res.status(500).json({
       error: "AI request failed.",
