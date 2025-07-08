@@ -1,75 +1,74 @@
 export default async function handler(req, res) {
   if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed. Use POST." });
+    return res.status(405).json({ error: "Method Not Allowed. Use POST." });
   }
 
   const { scriptContent } = req.body;
 
-  if (!scriptContent || typeof scriptContent !== "string" || scriptContent.trim().length === 0) {
-    return res.status(400).json({ error: "No script content provided." });
+  if (!scriptContent || scriptContent.trim() === "") {
+    return res.status(400).json({ error: "Missing scriptContent." });
   }
 
-  const prompt = `Dưới đây là một đoạn kịch bản video:
-
-${scriptContent}
-
-Trích xuất tối đa 15 từ khóa quan trọng nhất có liên quan đến nội dung. 
-Chỉ trả về JSON như ví dụ sau, KHÔNG thêm bất kỳ chữ nào khác ngoài JSON:
-
-{
-  "keywords": ["từ khóa 1", "từ khóa 2", "từ khóa 3"]
-}
-⚠️ Không thêm tiêu đề, lời chào, cảm ơn hay bất cứ gì ngoài JSON.`;
-
   const apiKey = process.env.OPENROUTER_API_KEY;
-  const model = process.env.OPENROUTER_MODEL_ID || "openai/gpt-3.5-turbo";
+  const modelId = process.env.OPENROUTER_MODEL_ID || "openai/gpt-4o";
 
   if (!apiKey) {
     return res.status(500).json({ error: "Missing OPENROUTER_API_KEY" });
   }
 
+  const prompt = `Dưới đây là một đoạn kịch bản video:\n\n${scriptContent}\n\nHãy trích xuất tối đa 15 từ khóa quan trọng nhất liên quan đến nội dung. Chỉ trả về JSON đúng như sau:\n\n{\n  "keywords": ["từ khóa 1", "từ khóa 2", "từ khóa 3"]\n}\nKhông thêm gì khác.`;
+
   try {
-    const responseAI = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    const aiRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-        Accept: "application/json"
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model,
+        model: modelId,
         messages: [{ role: "user", content: prompt }],
         temperature: 0.3
       })
     });
 
-    const data = await responseAI.json();
+    const data = await aiRes.json();
+
+    console.log("⚠️ Full API Response:", JSON.stringify(data, null, 2)); // <-- dòng này quan trọng để debug
 
     if (!data.choices || !data.choices[0]?.message?.content) {
-      return res.status(400).json({ error: "AI returned an empty response." });
+      return res.status(400).json({
+        error: "AI returned an empty response.",
+        fullResponse: data // trả về cho bạn xem luôn
+      });
     }
 
     const raw = data.choices[0].message.content.trim();
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
 
     if (!jsonMatch) {
-      return res.status(400).json({ error: "AI response is not valid JSON." });
+      return res.status(400).json({
+        error: "AI response is not valid JSON.",
+        raw
+      });
     }
 
-    let parsed;
+    let keywords;
     try {
-      parsed = JSON.parse(jsonMatch[0]);
-    } catch (err) {
-      return res.status(400).json({ error: "Could not parse JSON." });
+      const parsed = JSON.parse(jsonMatch[0]);
+      keywords = parsed.keywords;
+    } catch (e) {
+      return res.status(400).json({ error: "Failed to parse JSON from AI response." });
     }
 
-    if (!parsed.keywords || !Array.isArray(parsed.keywords)) {
-      return res.status(400).json({ error: "JSON does not contain valid 'keywords' array." });
+    if (!keywords || !Array.isArray(keywords)) {
+      return res.status(400).json({ error: "Parsed result missing 'keywords' array." });
     }
 
-    return res.status(200).json({ result: parsed });
+    return res.status(200).json({ keywords });
+
   } catch (error) {
-    console.error("Error calling AI:", error);
-    return res.status(500).json({ error: "Failed to process AI request." });
+    console.error("❌ Error during AI processing:", error);
+    return res.status(500).json({ error: "Internal server error.", detail: error.message });
   }
 }
