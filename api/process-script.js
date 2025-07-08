@@ -1,78 +1,92 @@
-export default async function handler(request, response) {
+export default async function handler(req, res) {
   try {
-    if (request.method !== "POST") {
-      return response.status(405).json({ error: "Method not allowed. Use POST." });
+    // 1. Chỉ cho phép phương thức POST
+    if (req.method !== "POST") {
+      return res.status(405).json({ error: "Method not allowed. Use POST." });
     }
 
-    const { scriptContent } = request.body;
-
+    // 2. Kiểm tra script đầu vào
+    const { scriptContent } = req.body;
     if (!scriptContent || scriptContent.trim().length === 0) {
-      return response.status(400).json({ error: "No script content provided." });
+      return res.status(400).json({ error: "No script content provided." });
     }
 
+    // 3. Lấy API Key và Model từ môi trường
+    const apiKey = process.env.OPENROUTER_API_KEY;
+    const model = process.env.OPENROUTER_MODEL_ID || "openai/gpt-4o";
+
+    // 4. Kiểm tra API Key
+    if (!apiKey || !apiKey.startsWith("sk-or-")) {
+      return res.status(500).json({ error: "Missing or invalid OPENROUTER_API_KEY." });
+    }
+
+    // 5. Tạo prompt rõ ràng
     const prompt = `Dưới đây là một đoạn kịch bản video:
 
 ${scriptContent}
 
-Trích xuất tối đa 15 từ khóa quan trọng nhất có liên quan đến nội dung.
-Chỉ trả về JSON như ví dụ sau, KHÔNG thêm bất kỳ chữ nào khác ngoài JSON:
+Trích xuất tối đa 15 từ khóa quan trọng nhất liên quan đến nội dung. 
+Chỉ trả về JSON như sau, KHÔNG thêm bất kỳ chữ nào khác ngoài JSON:
 
 {
   "keywords": ["từ khóa 1", "từ khóa 2", "từ khóa 3"]
-}`;
+}
+⚠️ KHÔNG thêm tiêu đề, lời chào hay mô tả.`
 
-    const apiKey = process.env.OPENROUTER_API_KEY;
-    const model = process.env.OPENROUTER_MODEL_ID || "openai/gpt-4o";
-
-    if (!apiKey) {
-      return response.status(500).json({ error: "Missing OPENROUTER_API_KEY" });
-    }
-
-    const apiResponse = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    // 6. Gửi yêu cầu đến OpenRouter
+    const apiRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-        "Accept": "application/json"
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
       },
       body: JSON.stringify({
         model,
-        messages: [{ role: "user", content: prompt }],
+        messages: [
+          {
+            role: "user",
+            content: prompt
+          }
+        ],
         temperature: 0.3
       })
     });
 
-    if (!apiResponse.ok) {
-      const errorDetail = await apiResponse.text();
-      return response.status(500).json({ error: "AI API error", detail: errorDetail });
+    // 7. Kiểm tra lỗi hệ thống
+    if (!apiRes.ok) {
+      const detail = await apiRes.text();
+      return res.status(500).json({ error: "AI API error", detail });
     }
 
-    const data = await apiResponse.json();
-    const content = data.choices?.[0]?.message?.content?.trim();
+    // 8. Xử lý kết quả
+    const result = await apiRes.json();
+    const rawContent = result?.choices?.[0]?.message?.content?.trim();
 
-    if (!content) {
-      return response.status(400).json({ error: "AI returned an empty response." });
+    if (!rawContent) {
+      return res.status(400).json({ error: "AI returned an empty response." });
     }
 
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    // 9. Trích JSON từ đoạn trả về
+    const jsonMatch = rawContent.match(/\{[\s\S]*?\}/);
     if (!jsonMatch) {
-      return response.status(400).json({ error: "AI response does not contain valid JSON." });
+      return res.status(400).json({ error: "AI response is not valid JSON." });
     }
 
     let parsed;
     try {
       parsed = JSON.parse(jsonMatch[0]);
     } catch (err) {
-      return response.status(400).json({ error: "Could not parse extracted JSON from AI." });
+      return res.status(400).json({ error: "Could not parse extracted JSON from AI." });
     }
 
     if (!parsed.keywords || !Array.isArray(parsed.keywords)) {
-      return response.status(400).json({ error: "JSON does not contain valid 'keywords' array." });
+      return res.status(400).json({ error: "JSON does not contain valid 'keywords' array." });
     }
 
-    return response.status(200).json({ result: parsed });
-  } catch (err) {
-    console.error("Unexpected error:", err);
-    return response.status(500).json({ error: "Internal server error." });
+    // 10. Trả về kết quả thành công
+    return res.status(200).json({ result: parsed });
+  } catch (error) {
+    console.error("Fatal Error:", error);
+    return res.status(500).json({ error: "Internal server error." });
   }
 }
