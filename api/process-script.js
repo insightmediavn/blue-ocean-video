@@ -16,11 +16,13 @@ export default async function handler(req, res) {
   }
 
   try {
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    const response = await fetch("https://openrouter.ai/v1/chat/completions", {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://blue-ocean-video.vercel.app",
+        "X-Title": "Senior Script Editor"
       },
       body: JSON.stringify({
         model,
