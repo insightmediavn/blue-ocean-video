@@ -4,10 +4,12 @@ export default async function handler(req, res) {
   }
 
   const { scriptContent } = req.body;
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  const model = "openai/gpt-4o";
 
-  if (!apiKey || !apiKey.startsWith("sk-or-v1-")) {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  const model = process.env.OPENROUTER_MODEL_ID || "openai/gpt-4o";
+  const referer = process.env.OPENROUTER_REFERER;
+
+  if (!apiKey || !apiKey.startsWith("sk-or-")) {
     return res.status(401).json({ error: "API Key missing or invalid." });
   }
 
@@ -21,7 +23,7 @@ export default async function handler(req, res) {
       headers: {
         "Authorization": `Bearer ${apiKey}`,
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://blue-ocean-video.vercel.app/",   // 🔥 phải đúng domain thật bạn deploy
+        "HTTP-Referer": referer || "https://blue-ocean-video.vercel.app/",
         "X-Title": "BlueOcean Script AI"
       },
       body: JSON.stringify({
