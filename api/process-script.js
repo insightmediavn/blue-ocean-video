@@ -1,35 +1,30 @@
-// pages/api/process-script.js
+// /pages/api/process-script.js
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  const modelId = process.env.OPENROUTER_MODEL_ID || "openai/gpt-4o";
-
-  if (!apiKey) {
-    return res.status(500).json({ error: "Missing API key" });
-  }
-
   const { scriptContent } = req.body;
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  const model = "openai/gpt-4o"; // or other
 
-  if (!scriptContent || scriptContent.trim().length < 5) {
-    return res.status(400).json({ error: "Missing or invalid script content" });
+  if (!scriptContent || scriptContent.trim().length < 20) {
+    return res.status(400).json({ error: "Script content quá ngắn hoặc không hợp lệ" });
   }
 
   try {
-    const completion = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${apiKey}`,
+        Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: modelId,
+        model,
         messages: [
           {
             role: "system",
-            content: "Bạn là một chuyên gia biên tập video giàu kinh nghiệm. Nhiệm vụ của bạn là phân tích nội dung video được gửi đến, sau đó viết lại thành một kịch bản mới hấp dẫn hơn, tối ưu retention và có cấu trúc rõ ràng."
+            content: "Bạn là chuyên gia tối ưu kịch bản YouTube hấp dẫn, tăng retention, dễ hiểu với người cao tuổi Mỹ."
           },
           {
             role: "user",
@@ -39,17 +34,15 @@ export default async function handler(req, res) {
       })
     });
 
-    const data = await completion.json();
+    const data = await response.json();
 
-    if (completion.status !== 200 || !data.choices || !data.choices[0]?.message?.content) {
-      return res.status(400).json({
-        error: "AI returned an empty response.",
-        raw: data
-      });
+    if (!data.choices || !data.choices[0]?.message?.content) {
+      return res.status(400).json({ error: "AI returned an empty response.", raw: data });
     }
 
-    return res.status(200).json({ result: data.choices[0].message.content });
-  } catch (error) {
-    return res.status(500).json({ error: "Server error", detail: error.message });
+    res.status(200).json({ output: data.choices[0].message.content });
+  } catch (err) {
+    console.error("AI error:", err);
+    res.status(500).json({ error: "Lỗi máy chủ AI", detail: err.message });
   }
 }
