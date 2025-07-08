@@ -1,25 +1,24 @@
+// pages/api/process-script.js
 export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method Not Allowed. Use POST." });
-  }
-
-  const { scriptContent } = req.body;
-
-  if (!scriptContent || scriptContent.trim() === "") {
-    return res.status(400).json({ error: "Missing scriptContent." });
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
   }
 
   const apiKey = process.env.OPENROUTER_API_KEY;
   const modelId = process.env.OPENROUTER_MODEL_ID || "openai/gpt-4o";
 
   if (!apiKey) {
-    return res.status(500).json({ error: "Missing OPENROUTER_API_KEY" });
+    return res.status(500).json({ error: "Missing API key" });
   }
 
-  const prompt = `Dưới đây là một đoạn kịch bản video:\n\n${scriptContent}\n\nHãy trích xuất tối đa 15 từ khóa quan trọng nhất liên quan đến nội dung. Chỉ trả về JSON đúng như sau:\n\n{\n  "keywords": ["từ khóa 1", "từ khóa 2", "từ khóa 3"]\n}\nKhông thêm gì khác.`;
+  const { scriptContent } = req.body;
+
+  if (!scriptContent || scriptContent.trim().length < 5) {
+    return res.status(400).json({ error: "Missing or invalid script content" });
+  }
 
   try {
-    const aiRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    const completion = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${apiKey}`,
@@ -27,48 +26,30 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         model: modelId,
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.3
+        messages: [
+          {
+            role: "system",
+            content: "Bạn là một chuyên gia biên tập video giàu kinh nghiệm. Nhiệm vụ của bạn là phân tích nội dung video được gửi đến, sau đó viết lại thành một kịch bản mới hấp dẫn hơn, tối ưu retention và có cấu trúc rõ ràng."
+          },
+          {
+            role: "user",
+            content: scriptContent
+          }
+        ]
       })
     });
 
-    const data = await aiRes.json();
+    const data = await completion.json();
 
-    console.log("⚠️ Full API Response:", JSON.stringify(data, null, 2)); // <-- dòng này quan trọng để debug
-
-    if (!data.choices || !data.choices[0]?.message?.content) {
+    if (completion.status !== 200 || !data.choices || !data.choices[0]?.message?.content) {
       return res.status(400).json({
         error: "AI returned an empty response.",
-        fullResponse: data // trả về cho bạn xem luôn
+        raw: data
       });
     }
 
-    const raw = data.choices[0].message.content.trim();
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-
-    if (!jsonMatch) {
-      return res.status(400).json({
-        error: "AI response is not valid JSON.",
-        raw
-      });
-    }
-
-    let keywords;
-    try {
-      const parsed = JSON.parse(jsonMatch[0]);
-      keywords = parsed.keywords;
-    } catch (e) {
-      return res.status(400).json({ error: "Failed to parse JSON from AI response." });
-    }
-
-    if (!keywords || !Array.isArray(keywords)) {
-      return res.status(400).json({ error: "Parsed result missing 'keywords' array." });
-    }
-
-    return res.status(200).json({ keywords });
-
+    return res.status(200).json({ result: data.choices[0].message.content });
   } catch (error) {
-    console.error("❌ Error during AI processing:", error);
-    return res.status(500).json({ error: "Internal server error.", detail: error.message });
+    return res.status(500).json({ error: "Server error", detail: error.message });
   }
 }
