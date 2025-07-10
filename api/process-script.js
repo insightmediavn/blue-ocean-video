@@ -26,7 +26,7 @@ Chỉ trả về JSON như ví dụ sau, KHÔNG thêm bất kỳ chữ nào khá
 {
   "keywords": ["từ khóa 1", "từ khóa 2", "từ khóa 3"]
 }
-⚠️ KHÔNG được thêm tiêu đề, lời chào, hay markdown như \`\`\`json.`
+⚠️ KHÔNG được thêm tiêu đề, lời chào, hay markdown như \`\`\`json.`;
 
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
@@ -37,42 +37,34 @@ Chỉ trả về JSON như ví dụ sau, KHÔNG thêm bất kỳ chữ nào khá
       body: JSON.stringify({
         model,
         messages: [
-          {
-            role: "user",
-            content: prompt
-          }
+          { role: "user", content: prompt }
         ],
         temperature: 0.3
       })
     });
 
     const data = await response.json();
+    const raw = data?.choices?.[0]?.message?.content || "";
 
-    const content = data?.choices?.[0]?.message?.content || "";
-
-    // ✅ bóc tách JSON từ trong markdown block ```json ... ```
-    const match = content.match(/```json\s*([\s\S]*?)\s*```/i) || content.match(/\{[\s\S]*\}/);
+    // ✅ Tách JSON từ block markdown ```json ... ```
+    const match = raw.match(/```json\s*([\s\S]*?)\s*```/) || raw.match(/\{[\s\S]*\}/);
     if (!match) {
-      return res.status(400).json({ error: "Could not extract JSON from AI response.", raw: content });
+      return res.status(400).json({ error: "Could not extract JSON from AI response.", raw });
     }
 
     let parsed;
     try {
       parsed = JSON.parse(match[1] || match[0]);
     } catch (e) {
-      return res.status(400).json({ error: "JSON.parse failed", raw: content });
+      return res.status(400).json({ error: "JSON.parse failed", raw });
     }
 
     if (!parsed.keywords || !Array.isArray(parsed.keywords)) {
-      return res.status(400).json({ error: "No valid 'keywords' array found", raw: parsed });
+      return res.status(400).json({ error: "No valid 'keywords' array found", raw });
     }
 
     return res.status(200).json({ result: parsed });
-
   } catch (error) {
-    return res.status(500).json({
-      error: "Internal server error.",
-      detail: error.message
-    });
+    return res.status(500).json({ error: "Internal server error", detail: error.message });
   }
 }
