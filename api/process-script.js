@@ -5,14 +5,18 @@ export default async function handler(req, res) {
 
   const { scriptContent } = req.body;
   const apiKey = process.env.OPENROUTER_API_KEY;
-  const model = "openai/gpt-4o";
+  const model = process.env.OPENROUTER_MODEL_ID || "openai/gpt-4o";
 
-  if (!apiKey || !scriptContent || scriptContent.trim().length < 20) {
-    return res.status(400).json({ error: "Missing API key or script content too short." });
+  if (!apiKey || !apiKey.startsWith("sk-or-")) {
+    return res.status(401).json({ error: "API Key missing or invalid." });
   }
 
-  const prompt = `
-Dưới đây là một đoạn kịch bản video:
+  if (!scriptContent || scriptContent.trim().length < 20) {
+    return res.status(400).json({ error: "Script content is too short or empty." });
+  }
+
+  try {
+    const prompt = `Dưới đây là một đoạn kịch bản video:
 
 ${scriptContent}
 
@@ -22,48 +26,53 @@ Chỉ trả về JSON như ví dụ sau, KHÔNG thêm bất kỳ chữ nào khá
 {
   "keywords": ["từ khóa 1", "từ khóa 2", "từ khóa 3"]
 }
-⚠️ Không thêm tiêu đề, lời chào, cảm ơn hay bất cứ gì ngoài JSON.
-`;
+⚠️ KHÔNG được thêm tiêu đề, lời chào, hay markdown như \`\`\`json.`
 
-  try {
-    const aiRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
+        "Content-Type": "application/json"
       },
       body: JSON.stringify({
         model,
         messages: [
-          { role: "user", content: prompt }
+          {
+            role: "user",
+            content: prompt
+          }
         ],
-        temperature: 0.3,
-      }),
+        temperature: 0.3
+      })
     });
 
-    const raw = await aiRes.text();
-    console.log("🔵 RAW TEXT FROM OPENROUTER:\n", raw);
+    const data = await response.json();
 
-    // Loại bỏ markdown block nếu có
-    const match = raw.match(/```json\s*([\s\S]*?)\s*```/i) || raw.match(/\{[\s\S]*\}/);
-    if (!match || match.length < 1) {
-      return res.status(400).json({ error: "Could not extract JSON from AI response", raw });
+    const rawContent = data?.choices?.[0]?.message?.content?.trim() || "";
+
+    // 🔍 Xử lý nếu AI trả về JSON nằm trong ```json ... ```
+    const jsonMatch = rawContent.match(/```json\s*([\s\S]*?)\s*```/i) || rawContent.match(/\{[\s\S]*\}/);
+
+    if (!jsonMatch || jsonMatch.length === 0) {
+      return res.status(400).json({ error: "AI response is not valid JSON.", raw: rawContent });
     }
 
     let parsed;
     try {
-      parsed = JSON.parse(match[1] || match[0]);
-    } catch (err) {
-      return res.status(400).json({ error: "Invalid JSON format from AI", raw });
+      parsed = JSON.parse(jsonMatch[1] || jsonMatch[0]); // xử lý cả khi không có markdown
+    } catch (e) {
+      return res.status(400).json({ error: "Could not parse JSON.", raw: rawContent });
     }
 
     if (!parsed.keywords || !Array.isArray(parsed.keywords)) {
-      return res.status(400).json({ error: "Missing or invalid 'keywords' in response", parsed });
+      return res.status(400).json({ error: "Missing or invalid 'keywords' in response." });
     }
 
     return res.status(200).json({ result: parsed });
-
-  } catch (err) {
-    return res.status(500).json({ error: "Internal server error", detail: err.message });
+  } catch (error) {
+    return res.status(500).json({
+      error: "Internal server error.",
+      detail: error.message
+    });
   }
 }
