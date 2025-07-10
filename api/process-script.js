@@ -1,27 +1,41 @@
+// pages/api/process-script.ts
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
-    return res.status(405).json({ error: "Only POST requests allowed." });
+    return res.status(405).json({ error: "Only POST method is allowed." });
   }
 
-  const { scriptContent } = req.body;
-
-  if (!scriptContent || scriptContent.trim().length < 10) {
-    return res.status(400).json({ error: "scriptContent is too short or missing." });
+  const { script } = req.body;
+  if (!script || script.trim().length < 20) {
+    return res.status(400).json({ error: "Script is missing or too short." });
   }
 
-  const apiKey = process.env.OPENROUTER_API_KEY || "sk-or-v1-your-real-key";
+  const apiKey = process.env.OPENROUTER_API_KEY;
   const model = process.env.OPENROUTER_MODEL_ID || "openai/gpt-4o";
 
-  const prompt = `Dưới đây là một đoạn kịch bản video:
+  if (!apiKey) {
+    return res.status(500).json({ error: "Missing OpenRouter API Key." });
+  }
 
-${scriptContent}
+  const prompt = `Dưới đây là một đoạn kịch bản video tiếng Việt dành cho người cao tuổi Mỹ:
 
-Trích xuất tối đa 15 từ khóa quan trọng nhất có liên quan đến nội dung. 
-Chỉ trả về JSON như sau, KHÔNG thêm bất kỳ chữ nào khác:
+${script}
 
-{
-  "keywords": ["từ khóa 1", "từ khóa 2", "từ khóa 3"]
-}`;
+1. Hãy phân chia đoạn kịch bản này thành từng cảnh ngắn, mỗi cảnh tương ứng với một dòng thoại rõ ràng.
+2. Với mỗi cảnh:
+  - Dịch sang tiếng Anh tự nhiên, dễ hiểu.
+  - Trích xuất tối đa 3 từ khoá hình ảnh có thể minh hoạ (ảnh hoặc video), viết bằng tiếng Anh.
+
+Trả kết quả dưới dạng JSON, không thêm chữ nào ngoài JSON:
+
+[
+  {
+    "vi": "Câu thoại tiếng Việt",
+    "en": "English translation",
+    "keywords": ["image keyword 1", "keyword 2"]
+  },
+  ...
+]`;
 
   try {
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -32,46 +46,26 @@ Chỉ trả về JSON như sau, KHÔNG thêm bất kỳ chữ nào khác:
       },
       body: JSON.stringify({
         model,
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.2
+        messages: [
+          { role: "user", content: prompt }
+        ],
+        temperature: 0.4
       })
     });
 
-    const rawText = await response.text();
-    console.log("🔵 RAW TEXT FROM OPENROUTER:\n", rawText);
+    const raw = await response.text();
+    console.log("🔎 RAW AI RESPONSE:", raw);
 
-    let json;
     try {
-      json = JSON.parse(rawText);
-    } catch (e) {
-      return res.status(400).json({ error: "Failed to parse AI response as JSON.", raw: rawText });
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) {
+        return res.status(400).json({ error: "AI response is not an array." });
+      }
+      return res.status(200).json({ result: parsed });
+    } catch (err) {
+      return res.status(400).json({ error: "Could not parse AI response as JSON.", raw });
     }
-
-    const content = json?.choices?.[0]?.message?.content?.trim();
-
-    if (!content) {
-      return res.status(400).json({ error: "AI returned an empty response.", raw: json });
-    }
-
-    const match = content.match(/\{[\s\S]*\}/);
-    if (!match) {
-      return res.status(400).json({ error: "No JSON object found in AI response.", content });
-    }
-
-    let result;
-    try {
-      result = JSON.parse(match[0]);
-    } catch (e) {
-      return res.status(400).json({ error: "Failed to parse extracted JSON.", json: match[0] });
-    }
-
-    if (!Array.isArray(result.keywords)) {
-      return res.status(400).json({ error: "Missing 'keywords' array in response.", result });
-    }
-
-    return res.status(200).json({ result });
-
-  } catch (err) {
-    return res.status(500).json({ error: "Request to OpenRouter failed.", detail: err.message });
+  } catch (error) {
+    return res.status(500).json({ error: "AI request failed.", detail: error.message });
   }
 }
