@@ -12,26 +12,17 @@ export default async function handler(req, res) {
   }
 
   const prompt = `
-You are a helpful assistant that analyzes video scripts. Please:
+Dưới đây là một đoạn kịch bản video:
 
-1. Split the script into scenes (each 5-10 seconds max).
-2. Translate each scene to English (if not already).
-3. Extract visual image keywords for each scene.
-4. Suggest a descriptive image or video prompt (no camera instructions).
-5. Return ONLY valid JSON in the following format:
+${scriptContent}
+
+Trích xuất tối đa 15 từ khóa quan trọng nhất có liên quan đến nội dung. 
+Chỉ trả về JSON như ví dụ sau, KHÔNG thêm bất kỳ chữ nào khác ngoài JSON:
 
 {
-  "scenes": [
-    {
-      "scene": "Translated scene line here...",
-      "image_keywords": ["keyword1", "keyword2"],
-      "prompt": "Prompt to generate image or search video"
-    }
-  ]
+  "keywords": ["từ khóa 1", "từ khóa 2", "từ khóa 3"]
 }
-Do NOT include extra commentary or explanation. Only return JSON.
-Here's the script:
-${scriptContent}
+⚠️ Không thêm tiêu đề, lời chào, cảm ơn hay bất cứ gì ngoài JSON.
 `;
 
   try {
@@ -51,29 +42,28 @@ ${scriptContent}
     });
 
     const raw = await aiRes.text();
+    console.log("🔵 RAW TEXT FROM OPENROUTER:\n", raw);
 
-    // Debug raw OpenRouter output
-    console.log("🧪 RAW AI RESPONSE:\n", raw);
-
-    const parsedJsonMatch = raw.match(/\{[\s\S]*\}/);
-    if (!parsedJsonMatch) {
-      return res.status(400).json({ error: "AI response missing JSON structure.", raw });
+    // Loại bỏ markdown block nếu có
+    const match = raw.match(/```json\s*([\s\S]*?)\s*```/i) || raw.match(/\{[\s\S]*\}/);
+    if (!match || match.length < 1) {
+      return res.status(400).json({ error: "Could not extract JSON from AI response", raw });
     }
 
     let parsed;
     try {
-      parsed = JSON.parse(parsedJsonMatch[0]);
+      parsed = JSON.parse(match[1] || match[0]);
     } catch (err) {
-      return res.status(400).json({ error: "Failed to parse JSON.", raw });
+      return res.status(400).json({ error: "Invalid JSON format from AI", raw });
     }
 
-    if (!parsed.scenes || !Array.isArray(parsed.scenes)) {
-      return res.status(400).json({ error: "Missing or invalid 'scenes' in response.", parsed });
+    if (!parsed.keywords || !Array.isArray(parsed.keywords)) {
+      return res.status(400).json({ error: "Missing or invalid 'keywords' in response", parsed });
     }
 
     return res.status(200).json({ result: parsed });
 
-  } catch (error) {
-    return res.status(500).json({ error: "Internal server error.", detail: error.message });
+  } catch (err) {
+    return res.status(500).json({ error: "Internal server error", detail: err.message });
   }
 }
