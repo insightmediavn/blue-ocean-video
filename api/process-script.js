@@ -1,64 +1,82 @@
 export default async function handler(req, res) {
   if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method Not Allowed" });
+    return res.status(405).json({ error: "Only POST allowed" });
   }
 
-  const { scriptContent } = req.body;
+  const { scriptContent, translationStyle = "neutral", targetAudience = "general" } = req.body;
   const apiKey = process.env.OPENROUTER_API_KEY;
   const model  = process.env.OPENROUTER_MODEL_ID || "openai/gpt-4o";
 
   if (!apiKey?.startsWith("sk-or-")) {
-    return res.status(401).json({ error: "Missing / invalid OPENROUTER_API_KEY." });
+    return res.status(401).json({ error: "Missing / invalid OPENROUTER_API_KEY" });
   }
-  if (!scriptContent || scriptContent.trim().length < 10) {
-    return res.status(400).json({ error: "Script too short." });
-  }
-
-  /* ------- call OpenRouter ------- */
-  const orRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method : "POST",
-    headers: {
-      Authorization : `Bearer ${apiKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: "user", content:
-`Dưới đây là một đoạn kịch bản video:
-
-${scriptContent}
-
-Trích xuất tối đa 15 từ khóa quan trọng nhất.  
-Chỉ trả về JSON đúng định dạng: {"keywords": ["..."]}  – KHÔNG thêm markdown.`}
-      ],
-      temperature: 0.3
-    })
-  });
-
-  const raw = await orRes.text();
-  console.log("🔵 RAW TEXT FROM OPENROUTER:\n", raw);
-
-  /* ------- bóc JSON -------- */
-  const mdMatch  = raw.match(/```(?:json)?\\s*([\\s\\S]*?)\\s*```/i);   // có ```json
-  const plainObj = raw.match(/\\{[\\s\\S]*\\}/);                       // fallback {...}
-
-  const jsonString = mdMatch?.[1] ?? mdMatch?.[0] ?? plainObj?.[0];
-
-  if (!jsonString) {
-    return res.status(400).json({ error: "Không tìm thấy JSON trong phản hồi.", raw });
+  if (!scriptContent || scriptContent.trim().length < 20) {
+    return res.status(400).json({ error: "Script too short" });
   }
 
-  let parsed;
+  /* -------- Build prompt -------- */
+  const sysPrompt = `
+You are an expert video-production assistant.
+
+When given a Vietnamese script you must:
+
+1. **Split** it into logical scenes (one or two sentences per scene).
+2. **Translate** each scene to English in the style **${translationStyle}**, suitable for **${targetAudience}**.
+3. Extract **2-4 image keywords** (EN) that best visualise that scene.
+4. Create a short **mid-journey / image prompt** that could illustrate the scene (no camera settings).
+
+Return **ONLY** valid JSON like:
+
+[
+  {
+    "vi": "Câu tiếng Việt ...",
+    "en": "English line ...",
+    "keywords": ["keyword1","keyword2"],
+    "prompt": "image prompt ..."
+  }
+]`;
+
   try {
-    parsed = JSON.parse(jsonString);
-  } catch (e) {
-    return res.status(400).json({ error: "JSON.parse thất bại.", jsonString });
-  }
+    const orRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method : "POST",
+      headers: {
+        Authorization : `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: "system", content: sysPrompt.trim() },
+          { role: "user",   content: scriptContent.trim() }
+        ],
+        temperature: 0.4
+      })
+    });
 
-  if (!Array.isArray(parsed.keywords)) {
-    return res.status(400).json({ error: "Thiếu hoặc sai trường 'keywords'.", parsed });
-  }
+    const raw = await orRes.text();
+    console.log("🔵 RAW AI TEXT:\n", raw);
 
-  return res.status(200).json({ result: parsed });
+    /* ---- extract JSON even if wrapped in ```json ... ``` ---- */
+    const md      = raw.match(/```(?:json)?\\s*([\\s\\S]*?)\\s*```/i);
+    const jsonStr = md?.[1] || md?.[0] || raw.match(/\\[[\\s\\S]*\\]/)?.[0];
+
+    if (!jsonStr) {
+      return res.status(400).json({ error: "No JSON found", raw });
+    }
+
+    let scenes;
+    try {
+      scenes = JSON.parse(jsonStr);
+    } catch (e) {
+      return res.status(400).json({ error: "JSON.parse failed", jsonStr });
+    }
+
+    if (!Array.isArray(scenes) || scenes.length === 0) {
+      return res.status(400).json({ error: "Parsed JSON is not an array", scenes });
+    }
+
+    return res.status(200).json({ scenes });
+  } catch (err) {
+    return res.status(500).json({ error: "AI call failed", detail: err.message });
+  }
 }
