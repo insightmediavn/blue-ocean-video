@@ -1,71 +1,79 @@
-// pages/api/process-script.ts
-
 export default async function handler(req, res) {
   if (req.method !== "POST") {
-    return res.status(405).json({ error: "Only POST method is allowed." });
+    return res.status(405).json({ error: "Method Not Allowed" });
   }
 
-  const { script } = req.body;
-  if (!script || script.trim().length < 20) {
-    return res.status(400).json({ error: "Script is missing or too short." });
-  }
-
+  const { scriptContent } = req.body;
   const apiKey = process.env.OPENROUTER_API_KEY;
-  const model = process.env.OPENROUTER_MODEL_ID || "openai/gpt-4o";
+  const model = "openai/gpt-4o";
 
-  if (!apiKey) {
-    return res.status(500).json({ error: "Missing OpenRouter API Key." });
+  if (!apiKey || !scriptContent || scriptContent.trim().length < 20) {
+    return res.status(400).json({ error: "Missing API key or script content too short." });
   }
 
-  const prompt = `Dưới đây là một đoạn kịch bản video tiếng Việt dành cho người cao tuổi Mỹ:
+  const prompt = `
+You are a helpful assistant that analyzes video scripts. Please:
 
-${script}
+1. Split the script into scenes (each 5-10 seconds max).
+2. Translate each scene to English (if not already).
+3. Extract visual image keywords for each scene.
+4. Suggest a descriptive image or video prompt (no camera instructions).
+5. Return ONLY valid JSON in the following format:
 
-1. Hãy phân chia đoạn kịch bản này thành từng cảnh ngắn, mỗi cảnh tương ứng với một dòng thoại rõ ràng.
-2. Với mỗi cảnh:
-  - Dịch sang tiếng Anh tự nhiên, dễ hiểu.
-  - Trích xuất tối đa 3 từ khoá hình ảnh có thể minh hoạ (ảnh hoặc video), viết bằng tiếng Anh.
-
-Trả kết quả dưới dạng JSON, không thêm chữ nào ngoài JSON:
-
-[
-  {
-    "vi": "Câu thoại tiếng Việt",
-    "en": "English translation",
-    "keywords": ["image keyword 1", "keyword 2"]
-  },
-  ...
-]`;
+{
+  "scenes": [
+    {
+      "scene": "Translated scene line here...",
+      "image_keywords": ["keyword1", "keyword2"],
+      "prompt": "Prompt to generate image or search video"
+    }
+  ]
+}
+Do NOT include extra commentary or explanation. Only return JSON.
+Here's the script:
+${scriptContent}
+`;
 
   try {
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    const aiRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json"
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({
         model,
         messages: [
           { role: "user", content: prompt }
         ],
-        temperature: 0.4
-      })
+        temperature: 0.3,
+      }),
     });
 
-    const raw = await response.text();
-    console.log("🔎 RAW AI RESPONSE:", raw);
+    const raw = await aiRes.text();
 
-    try {
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) {
-        return res.status(400).json({ error: "AI response is not an array." });
-      }
-      return res.status(200).json({ result: parsed });
-    } catch (err) {
-      return res.status(400).json({ error: "Could not parse AI response as JSON.", raw });
+    // Debug raw OpenRouter output
+    console.log("🧪 RAW AI RESPONSE:\n", raw);
+
+    const parsedJsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (!parsedJsonMatch) {
+      return res.status(400).json({ error: "AI response missing JSON structure.", raw });
     }
+
+    let parsed;
+    try {
+      parsed = JSON.parse(parsedJsonMatch[0]);
+    } catch (err) {
+      return res.status(400).json({ error: "Failed to parse JSON.", raw });
+    }
+
+    if (!parsed.scenes || !Array.isArray(parsed.scenes)) {
+      return res.status(400).json({ error: "Missing or invalid 'scenes' in response.", parsed });
+    }
+
+    return res.status(200).json({ result: parsed });
+
   } catch (error) {
-    return res.status(500).json({ error: "AI request failed.", detail: error.message });
+    return res.status(500).json({ error: "Internal server error.", detail: error.message });
   }
 }
